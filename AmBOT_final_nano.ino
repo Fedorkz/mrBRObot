@@ -1,3 +1,7 @@
+#define LOG_INPUT false
+#define LOG_OUTPUT false
+#define PID_LOG true
+
 #include "PID_v1.h"
 #include "LMotorController.h"
 #include "I2Cdev.h"
@@ -7,10 +11,7 @@
     #include "Wire.h"
 #endif
 
-#define LOG_INPUT true
-#define LOG_OUTPUT false
-
-#define MIN_ABS_SPEED 20
+#define MIN_ABS_SPEED 1
 
 MPU6050 mpu;
 
@@ -28,30 +29,43 @@ VectorFloat gravity;    // [x, y, z]            gravity vector
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
 //PID
-double originalSetpoint = 175.8;
+double originalSetpoint = 246.5;
 double setpoint = originalSetpoint;
 double movingAngleOffset = 0.1;
 double input, output;
 int moveState=0; //0 = balance; 1 = back; 2 = forth
-double Kp = 50;
-double Kd = 1.4;
-double Ki = 60;
+double Kp = 54;
+double Kd = 2;
+double Ki = 100;
 
-bool offsetsSet = false;
 PID pid(&input, &output, &setpoint, Kp, Ki, Kd, DIRECT);
 
-double motorSpeedFactorLeft = 0.6;
-double motorSpeedFactorRight = 0.5;
-//MOTOR CONTROLLER
-int ENA = 2;
-int IN1 = 14;
-int IN2 = 12;
-int IN3 = 13;
-int IN4 = 16;
-int ENB = 3;
-LMotorController motorController(ENA, IN1, IN2, ENB, IN3, IN4, motorSpeedFactorLeft, motorSpeedFactorRight);
+double motorSpeedFactorLeft = 1;
+double motorSpeedFactorRight = 1;
+
+// PINOUTS
+
+// mcu6050 (gravity): 
+// VCC
+// GND
+// D1
+// D2
+// nc
+// nc
+// nc
+// D8
 
 int INTERRUPT_PIN = 15;
+
+//MOTOR CONTROLLER
+int ENA = 2;  //D4
+int IN1 = 14; //D5
+int IN2 = 12; //D6 
+int IN3 = 13; //D7
+int IN4 = 16; //D0
+int ENB = 3;  //RX
+
+LMotorController motorController(ENA, IN1, IN2, ENB, IN3, IN4, motorSpeedFactorLeft, motorSpeedFactorRight);
 
 //timers
 long time1Hz = 0;
@@ -120,7 +134,8 @@ void setup()
         packetSize = mpu.dmpGetFIFOPacketSize();
         
         //setup PID
-        
+
+        analogWriteRange(255);
         pid.SetMode(AUTOMATIC);
         pid.SetSampleTime(10);
         pid.SetOutputLimits(-255, 255);  
@@ -147,13 +162,13 @@ void loop()
     while (!mpuInterrupt && fifoCount < packetSize)
     {
         //no mpu data - performing PID calculations and output to motors
+        pid.Compute();
         #if LOG_OUTPUT
         Serial.print(F("output "));
         Serial.println(output);
         #endif
-        pid.Compute();
         motorController.move(output, MIN_ABS_SPEED);
-        
+       
     }
     
     // reset interrupt flag and get INT_STATUS byte
@@ -187,30 +202,19 @@ void loop()
         mpu.dmpGetQuaternion(&q, fifoBuffer);
         mpu.dmpGetGravity(&gravity, &q);
         mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+        input = ypr[1] * 180/M_PI + 180;
+
         #if LOG_INPUT
             Serial.print("ypr\t");
             Serial.print(ypr[0] * 180/M_PI);
             Serial.print("\t");
             Serial.print(ypr[1] * 180/M_PI);
             Serial.print("\t");
-            Serial.println(ypr[2] * 180/M_PI);
+            Serial.print(ypr[2] * 180/M_PI);
+            Serial.print("\t");
+            Serial.println(input);
+            Serial.print("\t");
         #endif
-
-        if (!offsetsSet){
-          offsetsSet = true;
-          Serial.print("OFFSETS\t");
-          Serial.print(ypr[0]);
-          Serial.print("\t");
-          Serial.print(ypr[1]);
-          Serial.print("\t");
-          Serial.println(ypr[2]);
-
-          mpu.setXGyroOffset(ypr[0]);
-          mpu.setYGyroOffset(ypr[1]);
-          mpu.setZGyroOffset(ypr[2]);
-        }
-
-        input = ypr[1] * 180/M_PI + 180;
    }
 }
 
