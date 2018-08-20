@@ -7,6 +7,21 @@
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 
+#include <FS.h>                   //this needs to be first, or it all crashes and burns...
+
+#include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
+
+//needed for library
+#include <ctype.h>
+
+#include <DNSServer.h>
+#include <ESP8266WebServer.h>
+
+#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
+
+#include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
+
+
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
     #include "Wire.h"
 #endif
@@ -71,14 +86,25 @@ LMotorController motorController(ENA, IN1, IN2, ENB, IN3, IN4, motorSpeedFactorL
 long time1Hz = 0;
 long time5Hz = 0;
 
+char blynk_token[34] = "blynk tokrn here";
+bool shouldSaveConfig = false;
+
+ESP8266WebServer server(80); //creating the server at port 80
+
 volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
 void dmpDataReady()
 {
     mpuInterrupt = true;
 }
 
-
 void setup()
+{
+  Serial.begin(115200);
+
+  setupBRObot();
+}
+
+void setupBRObot()
 {
     // join I2C bus (I2Cdev library doesn't do this automatically)
     #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
@@ -88,10 +114,6 @@ void setup()
         Fastwire::setup(400, true);
     #endif
 
-    // initialize serial communication
-    // (115200 chosen because it is required for Teapot Demo output, but it's
-    // really up to you depending on your project)
-    Serial.begin(115200);
     while (!Serial); // wait for Leonardo enumeration, others continue immediately
 
     // initialize device
@@ -152,6 +174,221 @@ void setup()
     }
 }
 
+void setupWifi() {
+  char boot_info_string[100];
+  sprintf(boot_info_string, "BtMd: %u rsn: %s", ESP.getBootMode(), ESP.getResetReason().c_str());
+  Serial.print("Boot: ");
+  Serial.println(boot_info_string);
+//clean FS, for testing
+//  SPIFFS.format();
+
+  //read configuration from FS json
+  Serial.println("mounting FS...");
+
+  if (SPIFFS.begin()) {
+    Serial.println("mounted file system");
+    if (SPIFFS.exists("/config.json")) {
+      //file exists, reading and loading
+      Serial.println("reading config file");
+      File configFile = SPIFFS.open("/config.json", "r");
+      if (configFile) {
+        Serial.println("opened config file");
+        size_t size = configFile.size();
+        // Allocate a buffer to store contents of the file.
+        std::unique_ptr<char[]> buf(new char[size]);
+
+        configFile.readBytes(buf.get(), size);
+        DynamicJsonBuffer jsonBuffer;
+        JsonObject& json = jsonBuffer.parseObject(buf.get());
+        json.printTo(Serial);
+        if (json.success()) {
+          Serial.println("\nparsed json");
+
+          strcpy(blynk_token, json["blynk_token"]);
+
+          Serial.println("\ncopied vars");
+        } else {
+          Serial.println("failed to load json config");
+        }
+      }
+    }
+  } else {
+    Serial.println("failed to mount FS");
+  }
+  //end read
+
+  // The extra parameters to be configured (can be either global or just in the setup)
+  // After connecting, parameter.getValue() will get you the configured value
+  // id/name placeholder/prompt default length
+
+  //WiFiManager
+  //Local intialization. Once its business is done, there is no need to keep it around
+//  WiFiManager wifiManager// = createWifiManager();
+//
+
+
+  // The extra parameters to be configured (can be either global or just in the setup)
+  // After connecting, parameter.getValue() will get you the configured value
+  // id/name placeholder/prompt default length
+
+  WiFiManagerParameter custom_blynk_token("blynk_token", "blynk token", blynk_token, 32);
+
+  //WiFiManager
+  //Local intialization. Once its business is done, there is no need to keep it around
+  WiFiManager wifiManager;
+
+  //set config save notify callback
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+
+  //set static ip
+//  wifiManager.setSTAStaticIPConfig(IPAddress(10,0,1,99), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
+  
+  //add all your parameters here
+  wifiManager.addParameter(&custom_blynk_token);
+
+//  //set config save notify callback
+//  wifiManager.setSaveConfigCallback(saveConfigCallback);
+//
+//  //set static ip
+////  wifiManager.setSTAStaticIPConfig(IPAddress(10,0,1,99), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
+//  
+//  //add all your parameters here
+//  wifiManager.addParameter(&custom_mqtt_server);
+//  wifiManager.addParameter(&custom_mqtt_port);
+//  wifiManager.addParameter(&custom_blynk_token);
+//  wifiManager.addParameter(&custom_topic);
+
+  //reset settings - for testing
+//  wifiManager.resetSettings();
+
+  //set minimu quality of signal so it ignores AP's under that quality
+  //defaults to 8%
+  //wifiManager.setMinimumSignalQuality();
+  
+  //sets timeout until configuration portal gets turned off
+  //useful to make it all retry or go to sleep
+  //in seconds
+  //wifiManager.setTimeout(120);
+  boolean needDropSettings = false;
+  if (needDropSettings){
+    Serial.println("Drop wifi settings");
+    wifiManager.resetSettings();
+    delay(3000);
+    //reset and try again, or maybe put it to deep sleep
+    ESP.reset();
+    delay(5000);
+ 
+  }
+
+  //fetches ssid and pass and tries to connect
+  //if it does not connect it starts an access point with the specified name
+  //here  "AutoConnectAP"
+  //and goes into a blocking loop awaiting configuration
+  if (!wifiManager.autoConnect("AutoRelayConfig", "password")) {
+    Serial.println("failed to connect and hit timeout");
+    delay(3000);
+    //reset and try again, or maybe put it to deep sleep
+    ESP.reset();
+    delay(5000);
+  }
+
+  //if you get here you have connected to the WiFi
+  Serial.println("connected...yeey :)");
+
+  //read updated parameters
+  strcpy(blynk_token, custom_blynk_token.getValue());
+
+  //save the custom parameters to FS
+  if (shouldSaveConfig) {
+    Serial.println("saving config");
+    DynamicJsonBuffer jsonBuffer;
+    JsonObject& json = jsonBuffer.createObject();
+    json["blynk_token"] = blynk_token;
+
+    File configFile = SPIFFS.open("/config.json", "w");
+    if (!configFile) {
+      Serial.println("failed to open config file for writing");
+    }
+    json.printTo(Serial);
+    json.printTo(configFile);
+    configFile.close();
+    //end save
+  }
+  
+  Serial.println("local ip");
+  Serial.println(WiFi.localIP());
+
+  Serial.print("blynk_token: ");
+  Serial.println(blynk_token);
+
+  Serial.print("Server setup");
+  server.on("/ctrl", ctrlHandleFunc);
+  Serial.println("  --= SETUP DONE =--");
+}
+
+
+//callback notifying us of the need to save config
+void saveConfigCallback () {
+  Serial.println("Should save config");
+  shouldSaveConfig = true;
+}
+
+void ctrlHandleFunc(){
+   if (server.args() > 0){
+    for (int i = 0; i < server.args();i++){
+
+        String key = server.argName(i);
+        String val = server.arg(i);
+        
+//        Serial.print("POST Arguments: " ); Serial.println(server.args(i));
+        Serial.print("Name: "); Serial.println(key);
+        Serial.print("Value: "); Serial.println(val);
+
+        handleParam(key, val);
+      }
+   }
+}
+
+String KP = "kp";
+String KI = "ki";
+String KD = "kd";
+String LEFT_SHIFT = "lshift";
+String RIGHT_SHIFT = "rshift";
+String TARGET = "target";
+String LEFT_COEF = "lcoef";
+String RIGHT_COEF = "rcoef";
+String MINSTEP = "minstep";
+String SAMPLETIME = "sampletime";
+
+void handleParam(String key, String val){
+  if (KP.equalsIgnoreCase(key)){
+    Kp = val.toFloat();
+    pid.SetTunings(Kp, Ki, Kd);
+  } else if (KI.equalsIgnoreCase(key)){
+    Ki = val.toFloat();
+    pid.SetTunings(Kp, Ki, Kd);
+  } else if (KD.equalsIgnoreCase(key)){
+    Kd = val.toFloat();
+    pid.SetTunings(Kp, Ki, Kd);
+  } else if (SAMPLETIME.equalsIgnoreCase(key)){
+    int stime = val.toInt();
+    if (stime >= 1){
+       pid.SetSampleTime(stime);
+    }
+  } else if (LEFT_SHIFT.equalsIgnoreCase(key)){
+    
+  } else if (RIGHT_SHIFT.equalsIgnoreCase(key)){
+    
+  } else if (TARGET.equalsIgnoreCase(key)){
+    originalSetpoint = val.toFloat();
+  } else if (RIGHT_COEF.equalsIgnoreCase(key)){
+    motorSpeedFactorRight = val.toFloat();
+  } else if (LEFT_COEF.equalsIgnoreCase(key)){
+    motorSpeedFactorLeft = val.toFloat();
+  } else if (MINSTEP.equalsIgnoreCase(key)){
+    
+  }
+}
 
 void loop()
 {
@@ -216,6 +453,7 @@ void loop()
             Serial.print("\t");
         #endif
    }
+   server.handleClient(); //this is required for handling the incoming requests
 }
 
 
