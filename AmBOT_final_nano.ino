@@ -1,6 +1,6 @@
 #define LOG_INPUT false
 #define LOG_OUTPUT false
-#define PID_LOG true
+#define PID_LOG false
 
 #include "PID_v1.h"
 #include "LMotorController.h"
@@ -105,8 +105,10 @@ void setup()
   operating = false;
   
   Serial.begin(115200);
-
+  setupWifi();
+  
   setupBRObot();
+
 }
 
 void setupBRObot()
@@ -326,8 +328,12 @@ void setupWifi() {
   Serial.print("blynk_token: ");
   Serial.println(blynk_token);
 
-  Serial.print("Server setup");
+  Serial.println("Server setup");
   server.on("/ctrl", ctrlHandleFunc);
+  server.on("/", ctrlHandleFunc);
+    
+  server.begin();
+  Serial.println("HTTP server started");
   Serial.println("  --= SETUP DONE =--");
 }
 
@@ -339,6 +345,7 @@ void saveConfigCallback () {
 }
 
 void ctrlHandleFunc(){
+   Serial.println("GOT request:");
    if (server.args() > 0){
     for (int i = 0; i < server.args();i++){
 
@@ -351,6 +358,8 @@ void ctrlHandleFunc(){
         handleParam(key, val);
       }
    }
+   server.send(200, "text/html", "OK");
+   Serial.println("END request");
 }
 
 String KP = "kp";
@@ -366,40 +375,61 @@ String SAMPLETIME = "sampletime";
 String OPERATE = "operate";
 
 void handleParam(String key, String val){
+  val.trim();
   
+  if (val.length() == 0) {
+        Serial.print(key); Serial.print(" -> "); Serial.println("DROPPED EMPTY"); 
+    return;
+  }
+    
   if (KP.equalsIgnoreCase(key)){
     Kp = val.toFloat();
     pid.SetTunings(Kp, Ki, Kd);
+    Serial.print("Kp -> "); Serial.println(Kp); 
   } else if (KI.equalsIgnoreCase(key)){
     Ki = val.toFloat();
     pid.SetTunings(Kp, Ki, Kd);
+    Serial.print("Ki -> "); Serial.println(Ki); 
   } else if (KD.equalsIgnoreCase(key)){
     Kd = val.toFloat();
     pid.SetTunings(Kp, Ki, Kd);
+    Serial.print("Kd -> "); Serial.println(Kd); 
   } else if (SAMPLETIME.equalsIgnoreCase(key)){
     int stime = val.toInt();
     if (stime >= 1){
        pid.SetSampleTime(stime);
     }
+    Serial.print("stime -> "); Serial.println(stime); 
   } else if (LEFT_SHIFT.equalsIgnoreCase(key)){
     leftShift = val.toFloat();
+    Serial.print("leftShift -> "); Serial.println(leftShift); 
   } else if (RIGHT_SHIFT.equalsIgnoreCase(key)){
     rightShift = val.toFloat();
+    Serial.print("rightShift -> "); Serial.println(rightShift); 
   } else if (TARGET.equalsIgnoreCase(key)){
     originalSetpoint = val.toFloat();
+    Serial.print("originalSetpoint -> "); Serial.println(originalSetpoint); 
   } else if (RIGHT_COEF.equalsIgnoreCase(key)){
     motorSpeedFactorRight = val.toFloat();
+    Serial.print("motorSpeedFactorRight -> "); Serial.println(motorSpeedFactorRight); 
   } else if (LEFT_COEF.equalsIgnoreCase(key)){
     motorSpeedFactorLeft = val.toFloat();
+    Serial.print("motorSpeedFactorLeft -> "); Serial.println(motorSpeedFactorLeft); 
   } else if (MINSTEP.equalsIgnoreCase(key)){
     minAbsSpeed = val.toInt();
+    Serial.print("minAbsSpeed -> "); Serial.println(minAbsSpeed); 
   } else if (OPERATE.equalsIgnoreCase(key)){
     operating = val.toInt() != 0;
+    Serial.print("operating -> "); Serial.println(operating); 
+  } else {
+    Serial.print(key); Serial.print(" -> "); Serial.println("IGNORED"); 
   }
 }
 
 void loop()
 {
+     server.handleClient(); //this is required for handling the incoming requests
+
     // if programming failed, don't try to do anything
     if (!dmpReady) return;
 
@@ -413,6 +443,7 @@ void loop()
         Serial.println(output);
         #endif
         if (operating) {
+          Serial.println("Operating");
           motorController.move(output + leftShift, output + rightShift, minAbsSpeed);
         } else {
           motorController.move(0, 0, minAbsSpeed);
@@ -464,7 +495,6 @@ void loop()
             Serial.print("\t");
         #endif
    }
-   server.handleClient(); //this is required for handling the incoming requests
 }
 
 
