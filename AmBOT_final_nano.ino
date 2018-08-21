@@ -443,7 +443,6 @@ void loop()
         Serial.println(output);
         #endif
         if (operating) {
-          Serial.println("Operating");
           motorController.move(output + leftShift, output + rightShift, minAbsSpeed);
         } else {
           motorController.move(0, 0, minAbsSpeed);
