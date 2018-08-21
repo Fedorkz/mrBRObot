@@ -1,5 +1,6 @@
 #define LOG_INPUT false
 #define LOG_OUTPUT false
+#define LOG_WIFI false
 #define PID_LOG false
 
 #include "PID_v1.h"
@@ -23,7 +24,7 @@
 
 
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-    #include "Wire.h"
+#include "Wire.h"
 #endif
 
 MPU6050 mpu;
@@ -345,21 +346,28 @@ void saveConfigCallback () {
 }
 
 void ctrlHandleFunc(){
+   #if LOG_WIFI
    Serial.println("GOT request:");
+   #endif
+   
    if (server.args() > 0){
     for (int i = 0; i < server.args();i++){
 
         String key = server.argName(i);
         String val = server.arg(i);
-        
+
+        #if LOG_WIFI
         Serial.print("Name: "); Serial.println(key);
         Serial.print("Value: "); Serial.println(val);
-
+        #endif
+        
         handleParam(key, val);
       }
    }
    server.send(200, "text/html", "OK");
+   #if LOG_WIFI
    Serial.println("END request");
+   #endif
 }
 
 String KP = "kp";
@@ -378,51 +386,77 @@ void handleParam(String key, String val){
   val.trim();
   
   if (val.length() == 0) {
-        Serial.print(key); Serial.print(" -> "); Serial.println("DROPPED EMPTY"); 
+    #if LOG_WIFI    
+    Serial.print(key); Serial.print(" -> "); Serial.println("DROPPED EMPTY"); 
+    #endif
     return;
   }
     
   if (KP.equalsIgnoreCase(key)){
     Kp = val.toFloat();
     pid.SetTunings(Kp, Ki, Kd);
+    #if LOG_WIFI
     Serial.print("Kp -> "); Serial.println(Kp); 
+    #endif
   } else if (KI.equalsIgnoreCase(key)){
     Ki = val.toFloat();
     pid.SetTunings(Kp, Ki, Kd);
+    #if LOG_WIFI
     Serial.print("Ki -> "); Serial.println(Ki); 
+    #endif
   } else if (KD.equalsIgnoreCase(key)){
     Kd = val.toFloat();
     pid.SetTunings(Kp, Ki, Kd);
+    #if LOG_WIFI
     Serial.print("Kd -> "); Serial.println(Kd); 
+    #endif
   } else if (SAMPLETIME.equalsIgnoreCase(key)){
     int stime = val.toInt();
     if (stime >= 1){
        pid.SetSampleTime(stime);
     }
+    #if LOG_WIFI
     Serial.print("stime -> "); Serial.println(stime); 
+    #endif
   } else if (LEFT_SHIFT.equalsIgnoreCase(key)){
     leftShift = val.toFloat();
+    #if LOG_WIFI
     Serial.print("leftShift -> "); Serial.println(leftShift); 
+    #endif
   } else if (RIGHT_SHIFT.equalsIgnoreCase(key)){
     rightShift = val.toFloat();
+    #if LOG_WIFI
     Serial.print("rightShift -> "); Serial.println(rightShift); 
+    #endif
   } else if (TARGET.equalsIgnoreCase(key)){
-    originalSetpoint = val.toFloat();
+    setpoint = val.toFloat();
+    #if LOG_WIFI
     Serial.print("originalSetpoint -> "); Serial.println(originalSetpoint); 
+    #endif
   } else if (RIGHT_COEF.equalsIgnoreCase(key)){
     motorSpeedFactorRight = val.toFloat();
+    #if LOG_WIFI
     Serial.print("motorSpeedFactorRight -> "); Serial.println(motorSpeedFactorRight); 
+    #endif
   } else if (LEFT_COEF.equalsIgnoreCase(key)){
     motorSpeedFactorLeft = val.toFloat();
+    #if LOG_WIFI
     Serial.print("motorSpeedFactorLeft -> "); Serial.println(motorSpeedFactorLeft); 
+    #endif
   } else if (MINSTEP.equalsIgnoreCase(key)){
     minAbsSpeed = val.toInt();
+    #if LOG_WIFI
     Serial.print("minAbsSpeed -> "); Serial.println(minAbsSpeed); 
+    #endif
   } else if (OPERATE.equalsIgnoreCase(key)){
     operating = val.toInt() != 0;
+    #if LOG_WIFI
     Serial.print("operating -> "); Serial.println(operating); 
+    #endif
   } else {
+    #if LOG_WIFI
     Serial.print(key); Serial.print(" -> "); Serial.println("IGNORED"); 
+    #endif
   }
 }
 
