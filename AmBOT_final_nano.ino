@@ -26,8 +26,6 @@
     #include "Wire.h"
 #endif
 
-#define MIN_ABS_SPEED 1
-
 MPU6050 mpu;
 
 // MPU control/status vars
@@ -89,6 +87,11 @@ long time5Hz = 0;
 char blynk_token[34] = "blynk tokrn here";
 bool shouldSaveConfig = false;
 
+bool operating = false;
+double leftShift = 0.0;
+double rightShift = 0.0;
+int minAbsSpeed = 1;
+
 ESP8266WebServer server(80); //creating the server at port 80
 
 volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
@@ -99,6 +102,8 @@ void dmpDataReady()
 
 void setup()
 {
+  operating = false;
+  
   Serial.begin(115200);
 
   setupBRObot();
@@ -340,7 +345,6 @@ void ctrlHandleFunc(){
         String key = server.argName(i);
         String val = server.arg(i);
         
-//        Serial.print("POST Arguments: " ); Serial.println(server.args(i));
         Serial.print("Name: "); Serial.println(key);
         Serial.print("Value: "); Serial.println(val);
 
@@ -359,8 +363,10 @@ String LEFT_COEF = "lcoef";
 String RIGHT_COEF = "rcoef";
 String MINSTEP = "minstep";
 String SAMPLETIME = "sampletime";
+String OPERATE = "operate";
 
 void handleParam(String key, String val){
+  
   if (KP.equalsIgnoreCase(key)){
     Kp = val.toFloat();
     pid.SetTunings(Kp, Ki, Kd);
@@ -376,9 +382,9 @@ void handleParam(String key, String val){
        pid.SetSampleTime(stime);
     }
   } else if (LEFT_SHIFT.equalsIgnoreCase(key)){
-    
+    leftShift = val.toFloat();
   } else if (RIGHT_SHIFT.equalsIgnoreCase(key)){
-    
+    rightShift = val.toFloat();
   } else if (TARGET.equalsIgnoreCase(key)){
     originalSetpoint = val.toFloat();
   } else if (RIGHT_COEF.equalsIgnoreCase(key)){
@@ -386,7 +392,9 @@ void handleParam(String key, String val){
   } else if (LEFT_COEF.equalsIgnoreCase(key)){
     motorSpeedFactorLeft = val.toFloat();
   } else if (MINSTEP.equalsIgnoreCase(key)){
-    
+    minAbsSpeed = val.toInt();
+  } else if (OPERATE.equalsIgnoreCase(key)){
+    operating = val.toInt() != 0;
   }
 }
 
@@ -404,8 +412,11 @@ void loop()
         Serial.print(F("output "));
         Serial.println(output);
         #endif
-        motorController.move(output, MIN_ABS_SPEED);
-       
+        if (operating) {
+          motorController.move(output + leftShift, output + rightShift, minAbsSpeed);
+        } else {
+          motorController.move(0, 0, minAbsSpeed);
+        }
     }
     
     // reset interrupt flag and get INT_STATUS byte
