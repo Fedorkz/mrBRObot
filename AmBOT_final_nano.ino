@@ -21,7 +21,7 @@
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
 
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
-
+#include <WiFiUdp.h>
 
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
 #include "Wire.h"
@@ -91,9 +91,19 @@ bool shouldSaveConfig = false;
 bool operating = false;
 double leftShift = 0.0;
 double rightShift = 0.0;
-int minAbsSpeed = 1;
+int minAbsSpeed = 20;
 
 ESP8266WebServer server(80); //creating the server at port 80
+
+// A UDP instance to let us send and receive packets over UDP
+WiFiUDP Udp;
+
+// Multicast declarations
+IPAddress ipBroadcast(255, 255, 255, 255);
+unsigned int portBroadcast = 61565; // port to broadcast on must be between1024...65000
+bool gotFirstCommand = false;
+unsigned long lastTimeIpSent = 0;
+char ipAddressBuff[40];
 
 volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
 void dmpDataReady()
@@ -322,9 +332,12 @@ void setupWifi() {
     configFile.close();
     //end save
   }
-  
+
+  IPAddress ip = WiFi.localIP();
+  sprintf(ipAddressBuff, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
   Serial.println("local ip");
-  Serial.println(WiFi.localIP());
+  Serial.println(ip);
 
   Serial.print("blynk_token: ");
   Serial.println(blynk_token);
@@ -345,11 +358,24 @@ void saveConfigCallback () {
   shouldSaveConfig = true;
 }
 
+void sendIpAddressViaUDP() {
+  //Udp.begin(portBroadcast);
+  
+  Udp.beginPacket(ipBroadcast, portBroadcast);
+  Udp.write("mrBRObot:IP=");
+  Udp.write(ipAddressBuff);
+  Udp.endPacket(); 
+  
+  //Udp.stop();
+}
+
+
 void ctrlHandleFunc(){
    #if LOG_WIFI
    Serial.println("GOT request:");
    #endif
-   
+
+   gotFirstCommand = true;
    if (server.args() > 0){
     for (int i = 0; i < server.args();i++){
 
@@ -464,20 +490,39 @@ void loop()
 {
      server.handleClient(); //this is required for handling the incoming requests
 
+    if (!gotFirstCommand){
+      unsigned long now = millis();
+            
+      if (now >= lastTimeIpSent + 2000){      
+        Serial.println("Sending IP addres via UDP"); 
+        lastTimeIpSent = now;
+        sendIpAddressViaUDP();
+      }
+    }
     // if programming failed, don't try to do anything
     if (!dmpReady) return;
 
     // wait for MPU interrupt or extra packet(s) available
-    while (!mpuInterrupt && fifoCount < packetSize)
-    {
+    while (!mpuInterrupt && fifoCount < packetSize) {
         //no mpu data - performing PID calculations and output to motors
         pid.Compute();
+        double lSpeed = output + leftShift;
+        double rSpeed = output + rightShift;
         #if LOG_OUTPUT
         Serial.print(F("output "));
-        Serial.println(output);
+        Serial.print(output);
+        Serial.print(" lshift: ");
+        Serial.print(leftShift);
+        Serial.print(" lshift: ");
+        Serial.print(rightShift);
+        Serial.print(" l: ");
+        Serial.print(lSpeed);
+        Serial.print(" r: ");
+        Serial.println(rSpeed);
         #endif
         if (operating) {
-          motorController.move(output + leftShift, output + rightShift, minAbsSpeed);
+          
+          motorController.move(lSpeed, rSpeed, minAbsSpeed);
         } else {
           motorController.move(0, 0, minAbsSpeed);
         }
@@ -529,6 +574,3 @@ void loop()
         #endif
    }
 }
-
-
-
