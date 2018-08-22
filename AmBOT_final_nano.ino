@@ -85,7 +85,7 @@ LMotorController motorController(ENA, IN1, IN2, ENB, IN3, IN4, motorSpeedFactorL
 long time1Hz = 0;
 long time5Hz = 0;
 
-char blynk_token[34] = "blynk tokrn here";
+char robo_name[40] = "Fedzilla";
 bool shouldSaveConfig = false;
 
 bool operating = false;
@@ -192,11 +192,16 @@ void setupBRObot()
     }
 }
 
+  //WiFiManager
+  //Local intialization. Once its business is done, there is no need to keep it around
+  WiFiManager wifiManager;
+
 void setupWifi() {
   char boot_info_string[100];
   sprintf(boot_info_string, "BtMd: %u rsn: %s", ESP.getBootMode(), ESP.getResetReason().c_str());
   Serial.print("Boot: ");
   Serial.println(boot_info_string);
+
 //clean FS, for testing
 //  SPIFFS.format();
 
@@ -222,7 +227,9 @@ void setupWifi() {
         if (json.success()) {
           Serial.println("\nparsed json");
 
-          strcpy(blynk_token, json["blynk_token"]);
+          if (json.containsKey("robo_name")){
+            strcpy(robo_name, json["robo_name"]);
+          }
 
           Serial.println("\ncopied vars");
         } else {
@@ -249,11 +256,7 @@ void setupWifi() {
   // After connecting, parameter.getValue() will get you the configured value
   // id/name placeholder/prompt default length
 
-  WiFiManagerParameter custom_blynk_token("blynk_token", "blynk token", blynk_token, 32);
-
-  //WiFiManager
-  //Local intialization. Once its business is done, there is no need to keep it around
-  WiFiManager wifiManager;
+  WiFiManagerParameter custom_robo_name("robo_name", "BRObot name:", robo_name, 40);
 
   //set config save notify callback
   wifiManager.setSaveConfigCallback(saveConfigCallback);
@@ -262,7 +265,7 @@ void setupWifi() {
 //  wifiManager.setSTAStaticIPConfig(IPAddress(10,0,1,99), IPAddress(10,0,1,1), IPAddress(255,255,255,0));
   
   //add all your parameters here
-  wifiManager.addParameter(&custom_blynk_token);
+  wifiManager.addParameter(&custom_robo_name);
 
 //  //set config save notify callback
 //  wifiManager.setSaveConfigCallback(saveConfigCallback);
@@ -273,7 +276,7 @@ void setupWifi() {
 //  //add all your parameters here
 //  wifiManager.addParameter(&custom_mqtt_server);
 //  wifiManager.addParameter(&custom_mqtt_port);
-//  wifiManager.addParameter(&custom_blynk_token);
+//  wifiManager.addParameter(&custom_robo_name);
 //  wifiManager.addParameter(&custom_topic);
 
   //reset settings - for testing
@@ -289,13 +292,7 @@ void setupWifi() {
   //wifiManager.setTimeout(120);
   boolean needDropSettings = false;
   if (needDropSettings){
-    Serial.println("Drop wifi settings");
-    wifiManager.resetSettings();
-    delay(3000);
-    //reset and try again, or maybe put it to deep sleep
-    ESP.reset();
-    delay(5000);
- 
+    dropSettings();
   }
 
   //fetches ssid and pass and tries to connect
@@ -314,14 +311,14 @@ void setupWifi() {
   Serial.println("connected...yeey :)");
 
   //read updated parameters
-  strcpy(blynk_token, custom_blynk_token.getValue());
+  strcpy(robo_name, custom_robo_name.getValue());
 
   //save the custom parameters to FS
   if (shouldSaveConfig) {
     Serial.println("saving config");
     DynamicJsonBuffer jsonBuffer;
     JsonObject& json = jsonBuffer.createObject();
-    json["blynk_token"] = blynk_token;
+    json["robo_name"] = robo_name;
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
@@ -339,8 +336,8 @@ void setupWifi() {
   Serial.println("local ip");
   Serial.println(ip);
 
-  Serial.print("blynk_token: ");
-  Serial.println(blynk_token);
+  Serial.print("robo_name: ");
+  Serial.println(robo_name);
 
   Serial.println("Server setup");
   server.on("/ctrl", ctrlHandleFunc);
@@ -358,12 +355,28 @@ void saveConfigCallback () {
   shouldSaveConfig = true;
 }
 
+void dropSettings(){
+  Serial.println("Drop wifi settings");
+  wifiManager.resetSettings();
+  delay(3000);
+  //reset and try again, or maybe put it to deep sleep
+  ESP.reset();
+  delay(5000);
+}
+
 void sendIpAddressViaUDP() {
   //Udp.begin(portBroadcast);
-  
+  Serial.print("Sending IP addres via UDP, port = "); 
+  Serial.println(portBroadcast); 
+
   Udp.beginPacket(ipBroadcast, portBroadcast);
-  Udp.write("mrBRObot:IP=");
+  
+  Udp.write("mrBRObot: { name = ");
+  Udp.write(robo_name);
+  Udp.write(", ip = ");
   Udp.write(ipAddressBuff);
+  Udp.write(" }");
+  
   Udp.endPacket(); 
   
   //Udp.stop();
@@ -407,6 +420,8 @@ String RIGHT_COEF = "rcoef";
 String MINSTEP = "minstep";
 String SAMPLETIME = "sampletime";
 String OPERATE = "operate";
+String DROPSETTINGS = "dropsettings";
+String DISCONNECT = "disconnect";
 
 void handleParam(String key, String val){
   val.trim();
@@ -479,6 +494,16 @@ void handleParam(String key, String val){
     #if LOG_WIFI
     Serial.print("operating -> "); Serial.println(operating); 
     #endif
+  } else if (DISCONNECT.equalsIgnoreCase(key) && val.toInt() == 1){
+    gotFirstCommand = false;
+    #if LOG_WIFI
+    Serial.print("gotFirstCommand -> "); Serial.println(gotFirstCommand); 
+    #endif
+  } else if (DROPSETTINGS.equalsIgnoreCase(key) && val.toInt() == 1){
+    dropSettings();
+    #if LOG_WIFI
+    Serial.println("drop settings requested");
+    #endif
   } else {
     #if LOG_WIFI
     Serial.print(key); Serial.print(" -> "); Serial.println("IGNORED"); 
@@ -494,7 +519,6 @@ void loop()
       unsigned long now = millis();
             
       if (now >= lastTimeIpSent + 2000){      
-        Serial.println("Sending IP addres via UDP"); 
         lastTimeIpSent = now;
         sendIpAddressViaUDP();
       }
